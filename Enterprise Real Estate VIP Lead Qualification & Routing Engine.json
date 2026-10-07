@@ -1,0 +1,450 @@
+{
+  "name": "Enterprise Real Estate VIP Lead Qualification & Routing Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "realestate-lead-intake",
+        "options": {
+          "responseCode": {
+            "values": {}
+          }
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -528,
+        -48
+      ],
+      "id": "c5afaac8-be80-4bdd-bf81-ecbe00b75877",
+      "name": "01 - Ingest Lead Form Submission",
+      "webhookId": "6bb4764f-8c31-4fed-8a70-bee0f8b9abe8"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\n\n// Parse budget numbers clean\nlet rawBudget = String(body.budget || \"0\").toLowerCase();\nlet numericBudget = 0;\n\nif (rawBudget.includes(\"crore\") || rawBudget.includes(\"cr\")) {\n  numericBudget = parseFloat(rawBudget.replace(/[^0-9.]/g, \"\")) * 10000000;\n} else if (rawBudget.includes(\"lac\") || rawBudget.includes(\"lakh\")) {\n  numericBudget = parseFloat(rawBudget.replace(/[^0-9.]/g, \"\")) * 100000;\n} else if (rawBudget.includes(\"m\")) {\n  numericBudget = parseFloat(rawBudget.replace(/[^0-9.]/g, \"\")) * 1000000;\n} else {\n  numericBudget = parseFloat(rawBudget.replace(/[^0-9.]/g, \"\")) || 0;\n}\n\nreturn [{\n  json: {\n    lead_id: \"RE-\" + Math.floor(10000 + Math.random() * 90000),\n    full_name: body.name || \"Anonymous Lead\",\n    contact_email: body.email || \"client-lead@example.com\",\n    contact_phone: body.phone || \"Not Provided\",\n    inquiry_message: body.message || \"Looking for luxury residential plot or villa for immediate purchase.\",\n    declared_budget_pkr: numericBudget,\n    location_preference: body.location || \"Prime Commercial / Residential Zone\",\n    timeline: body.timeline || \"Immediate / 30 Days\",\n    ingested_at: new Date().toISOString()\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -304,
+        -48
+      ],
+      "id": "37d98cc2-1726-4f6d-9ee6-39ec09e2a85b",
+      "name": "02 - Normalize Lead Payload"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Lead ID: {{ $json.lead_id }}\nFull Name: {{ $json.full_name }}\nDeclared Budget (PKR): {{ $json.declared_budget_pkr }}\nPreferred Location: {{ $json.location_preference }}\nPurchase Timeline: {{ $json.timeline }}\nMessage/Requirement: {{ $json.inquiry_message }}",
+        "options": {
+          "systemMessage": "You are an Enterprise Real Estate Investment Director and High-Net-Worth Lead Qualifier.\nEvaluate the lead inquiry data.\n\nOutput a single strict JSON object without markdown wrappers with these exact keys:\n- \"intent_score\": integer from 1 to 100 based on urgency, realistic budget, and timeline\n- \"buyer_segment\": \"VIP_INVESTOR\" (if budget >= 15000000 or intent_score >= 80), otherwise \"STANDARD_INQUIRY\"\n- \"recommended_action\": clear directive for sales team (e.g. \"Immediate phone outreach within 10 minutes\")\n- \"custom_pitch_angle\": tailored 2-sentence value proposition matching their budget & location"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -80,
+        -48
+      ],
+      "id": "518f6040-09cf-4c0d-a92c-224cd66023f3",
+      "name": "03 - AI Buyer Intent & Qualification Specialist",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        -224,
+        160
+      ],
+      "id": "ef42ddb4-af8d-4a12-a8b5-9b36a1d686c2",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "KskgYheGpZvh6WAW",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawOutput = $input.first().json.output || \"{}\";\nconst lead = $('02 - Normalize Lead Payload').item.json;\n\nlet parsed = {};\ntry {\n  const cleaned = rawOutput.replace(/```json/g, \"\").replace(/```/g, \"\").trim();\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  const isHighVal = lead.declared_budget_pkr >= 15000000;\n  parsed = {\n    intent_score: isHighVal ? 88 : 55,\n    buyer_segment: isHighVal ? \"VIP_INVESTOR\" : \"STANDARD_INQUIRY\",\n    recommended_action: isHighVal ? \"Priority phone outreach\" : \"Nurture via email\",\n    custom_pitch_angle: \"Prime residential and commercial opportunities aligned with client portfolio.\"\n  };\n}\n\nconst isVip = (parsed.buyer_segment === \"VIP_INVESTOR\") || (Number(parsed.intent_score) >= 80) || (lead.declared_budget_pkr >= 15000000);\n\nreturn [{\n  json: {\n    ...lead,\n    intent_score: Number(parsed.intent_score) || 60,\n    buyer_segment: isVip ? \"VIP_INVESTOR\" : \"STANDARD_INQUIRY\",\n    recommended_action: parsed.recommended_action,\n    custom_pitch_angle: parsed.custom_pitch_angle,\n    is_vip: isVip,\n    qualified_at: new Date().toISOString()\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        288,
+        -48
+      ],
+      "id": "3fae053a-6832-4b1f-b09d-a58f8695c2c0",
+      "name": "04 - Parse Qualification Intelligence"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "8f0325c1-1dbc-4a95-8f29-8e2784a6657c",
+              "leftValue": "={{ $json.is_vip }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        512,
+        -16
+      ],
+      "id": "3f625765-d815-43e9-bb01-a1778ee94ea6",
+      "name": "05 - Is VIP Investor?"
+    },
+    {
+      "parameters": {
+        "sendTo": "work.zafarabbas@gmail.com",
+        "subject": "=Exclusive Investment Opportunities: {{ $json.location_preference }} [Ref: {{ $json.lead_id }}]",
+        "emailType": "text",
+        "message": "=Dear {{ $json.full_name }},  Thank you for reaching out regarding premium acquisitions in {{ $json.location_preference }}.  {{ $json.custom_pitch_angle }}  Our Senior Investment Director has been assigned to your profile and will contact you directly at {{ $json.contact_phone }} to share private off-market listings.  Warm regards, Private Client Advisory Group",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        -192
+      ],
+      "id": "4f2ec56a-7b69-42dc-9ef9-acb78049e628",
+      "name": "06A - Dispatch VIP Investment Portfolio",
+      "webhookId": "3e56e9d8-6c9c-4ce7-8126-912fb9a73017",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOJsfsIV1jaxrs7E",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "malikzafarabbasawan5@gmail.com",
+        "subject": "=🔥 HIGH-VALUE LEAD ({{ $json.buyer_segment }}): {{ $json.full_name }} [PKR {{ $json.declared_budget_pkr }}]",
+        "emailType": "text",
+        "message": "=HIGH PRIORITY INVESTOR LEAD DETECTED  Lead ID: {{ $json.lead_id }} Name: {{ $json.full_name }} Phone: {{ $json.contact_phone }} Email: {{ $json.contact_email }} Budget: PKR {{ $json.declared_budget_pkr }} Preferred Location: {{ $json.location_preference }} Timeline: {{ $json.timeline }} Intent Score: {{ $json.intent_score }} / 100  Sales Directive: {{ $json.recommended_action }}  Original Requirement: \"{{ $json.inquiry_message }}\"",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        944,
+        -192
+      ],
+      "id": "b249340f-f590-4f0a-a46c-bb99dbd14d28",
+      "name": "06B - Alert Sales Director (High Priority)",
+      "webhookId": "8c71fbb8-a8be-4493-b1e7-1c61908db893",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOJsfsIV1jaxrs7E",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "work.zafarabbas@gmail.com",
+        "subject": "=Thank you for your inquiry [Ref: {{ $json.lead_id }}]",
+        "emailType": "text",
+        "message": "=Hi {{ $json.full_name }},  Thank you for reaching out. We have received your inquiry regarding properties in {{ $json.location_preference }}.  One of our portfolio associates will review your requirements and follow up with available options.  Best regards, Customer Support Team",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        848,
+        48
+      ],
+      "id": "402d68e2-4840-4a72-a0fb-653d2cdbdd03",
+      "name": "06C - Dispatch Standard Acknowledgement",
+      "webhookId": "7b94a16d-e66a-44fa-8a41-cbb383232847",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOJsfsIV1jaxrs7E",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1QQFgh0m6pJnU7K-yF6Zv06VGJlTmqfSTPnrigTRLh_8/edit?gid=0#gid=0",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1QQFgh0m6pJnU7K-yF6Zv06VGJlTmqfSTPnrigTRLh_8/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Lead ID": "={{ $('04 - Parse Qualification Intelligence').item.json.lead_id }}",
+            "Name ": "={{ $('04 - Parse Qualification Intelligence').item.json.full_name }}",
+            "Email": "={{ $('04 - Parse Qualification Intelligence').item.json.contact_email }}",
+            "Phone": "={{ $('04 - Parse Qualification Intelligence').item.json.contact_phone }}",
+            "Budget": "={{ $('04 - Parse Qualification Intelligence').item.json.declared_budget_pkr }}",
+            "Location": "={{ $('04 - Parse Qualification Intelligence').item.json.location_preference }}",
+            "Segment": "={{ $('04 - Parse Qualification Intelligence').item.json.buyer_segment }}",
+            "Intent Score": "={{ $('04 - Parse Qualification Intelligence').item.json.intent_score }}",
+            "Timestamp": "={{ $('04 - Parse Qualification Intelligence').item.json.qualified_at }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Lead ID",
+              "displayName": "Lead ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Name ",
+              "displayName": "Name ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Phone",
+              "displayName": "Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Budget",
+              "displayName": "Budget",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Location",
+              "displayName": "Location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Segment",
+              "displayName": "Segment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Intent Score",
+              "displayName": "Intent Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1216,
+        -80
+      ],
+      "id": "7340abad-94d5-4e7e-9203-17a1af785ebb",
+      "name": "07 - Sync Master Real Estate Leads",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ZWozehApm3jGgQww",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "01 - Ingest Lead Form Submission": {
+      "main": [
+        [
+          {
+            "node": "02 - Normalize Lead Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 - Normalize Lead Payload": {
+      "main": [
+        [
+          {
+            "node": "03 - AI Buyer Intent & Qualification Specialist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "03 - AI Buyer Intent & Qualification Specialist",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 - AI Buyer Intent & Qualification Specialist": {
+      "main": [
+        [
+          {
+            "node": "04 - Parse Qualification Intelligence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04 - Parse Qualification Intelligence": {
+      "main": [
+        [
+          {
+            "node": "05 - Is VIP Investor?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "05 - Is VIP Investor?": {
+      "main": [
+        [
+          {
+            "node": "06A - Dispatch VIP Investment Portfolio",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "06C - Dispatch Standard Acknowledgement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "06A - Dispatch VIP Investment Portfolio": {
+      "main": [
+        [
+          {
+            "node": "06B - Alert Sales Director (High Priority)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "06C - Dispatch Standard Acknowledgement": {
+      "main": [
+        [
+          {
+            "node": "07 - Sync Master Real Estate Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "06B - Alert Sales Director (High Priority)": {
+      "main": [
+        [
+          {
+            "node": "07 - Sync Master Real Estate Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "13bf6000-f95b-49f7-bdab-eca89f75b026",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fa2fd4966574db7289205074e7b81781b706d11259d5e83c66766e93f08e3704"
+  },
+  "nodeGroups": [],
+  "id": "RjT4vKZ1Th7qkeUe",
+  "tags": []
+}
